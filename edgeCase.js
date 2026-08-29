@@ -1,71 +1,73 @@
 const { createEvent } = require("./events");
 
+// Ambas alertas quedan programadas para el mismo instante: es el escenario que
+// pone a prueba el criterio de desempate del event loop.
+const SHARED_DELAY = 1000;
+
+const evacuationAlert = {
+  eventName: "alertaEvacuacion",
+  eventType: "emergencia",
+  delay: SHARED_DELAY,
+};
+
+const securityAlert = {
+  eventName: "alertaSeguridad",
+  eventType: "emergencia",
+  delay: SHARED_DELAY,
+};
+
 function runEdgeCase() {
   const refTime = Date.now();
+  const register = [];
+  const executionTrace = [];
 
-  const eventA = {
-    eventName: "alertaEvacuacion",
-    eventType: "emergencia",
-    delay: 1000,
-  };
-
-  const eventB = {
-    eventName: "alertaSeguridad",
-    eventType: "emergencia",
-    delay: 1000,
-  };
-
-  console.log("\n--- CASO LÍMITE ---");
-  console.log("Dos eventos tienen exactamente el mismo tiempo programado.");
+  console.log("\n--- CASO LIMITE ---");
+  console.log("Dos alertas comparten exactamente el mismo tiempo programado.");
 
   return new Promise((resolve) => {
-    const register = [];
+    // La macrotarea registra el evento y la microtarea encadenada confirma la
+    // alerta, para observar en qué momento se drena cada cola.
+    function schedule(alert, done) {
+      setTimeout(() => {
+        const event = createEvent(alert, refTime);
+        register.push(event);
+        executionTrace.push(`macrotarea: ${event.eventName}`);
 
-    setTimeout(() => {
-      const event = createEvent(eventA, refTime);
-      register.push(event);
+        Promise.resolve().then(() => {
+          executionTrace.push(`microtarea: confirmacion de ${event.eventName}`);
+          done();
+        });
+      }, alert.delay);
+    }
 
-      console.log("Ejecutado:", event.eventName);
-
+    function checkCompletion() {
       if (register.length === 2) {
-        resolve(register);
+        resolve({ register, executionTrace });
       }
-    }, eventA.delay);
+    }
 
-    setTimeout(() => {
-      const event = createEvent(eventB, refTime);
-      register.push(event);
-
-      console.log("Ejecutado:", event.eventName);
-
-      if (register.length === 2) {
-        resolve(register);
-      }
-    }, eventB.delay);
-  }).then((register) => {
-    console.log("\nResultado del caso límite:");
+    schedule(evacuationAlert, checkCompletion);
+    schedule(securityAlert, checkCompletion);
+  }).then(({ register: log, executionTrace: trace }) => {
+    console.log("\nResultado del caso limite:");
 
     console.table(
-      register.map((event, index) => ({
-        ordenEjecucion: index + 1,
+      log.map((event, index) => ({
+        executionOrder: index + 1,
         eventName: event.eventName,
         scheduledTime: event.scheduledTime,
         realTime: event.realTime,
         deviation: event.realTime - event.scheduledTime,
-      }))
+      })),
     );
 
-    console.log(
-      "\nPrimer evento ejecutado:",
-      register[0].eventName
-    );
+    console.log("\nOrden real de vaciado de las colas:");
+    trace.forEach((step, index) => console.log(`${index + 1}. ${step}`));
 
-    console.log(
-      "Segundo evento ejecutado:",
-      register[1].eventName
-    );
+    console.log("\nPrimera alerta ejecutada:", log[0].eventName);
+    console.log("Segunda alerta ejecutada:", log[1].eventName);
 
-    return register;
+    return log;
   });
 }
 
